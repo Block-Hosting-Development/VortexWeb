@@ -1,0 +1,17 @@
+{
+  "swfs": [
+    {
+      "location": "logo-anim.swf",
+      "title": "Ruffle Logo",
+      "author": "Ruffle contributors",
+      "authorLink": "https://ruffle.rs",
+      "config": {
+        "autoplay": "off",
+        "backgroundColor": "#000",
+        "letterbox": "off",
+        "unmuteOverlay": "hidden"
+      }
+    }
+  ]
+}
+ 
