@@ -1,67 +1,74 @@
-import createBareServer from "@tomphttp/bare-server-node";
-import { fileURLToPath } from "url";
-import { createServer as createHttpsServer } from "node:https";
-import { createServer as createHttpServer } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
-import serveStatic from "serve-static";
+import { createBareServer } from "@tomphttp/bare-server-node";
+import express from "express";
+import { createServer } from "node:http";
+import { publicPath } from "ultraviolet-static";
+import { uvPath } from "@titaniumnetwork-dev/ultraviolet";
+import { join } from "node:path";
+import { hostname } from "node:os";
 
 const bare = createBareServer("/bare/");
+const app = express();
 
-const serve = serveStatic(
-  fileURLToPath(new URL("../static/", import.meta.url)),
-  { fallthrough: false }
-);
+// Load our publicPath first and prioritize it over UV.
+app.use(express.static("public/"));
+// Load vendor files last.
+// The vendor's uv.config.js won't conflict with our uv.config.js inside the publicPath directory.
+app.use("/uv/", express.static(uvPath));
 
-var server;
-if (existsSync("../ssl/key.pem") && existsSync("../ssl/cert.pem")) {
-  server = createHttpsServer({
-    key: readFileSync("../ssl/key.pem"),
-    cert: readFileSync("../ssl/cert.pem"),
-  });
-} else server = createHttpServer();
+// Error for everything else
+app.use((req, res) => {
+  res.status(404);
+  res.sendFile(join(publicPath, "404.html"));
+});
+
+const server = createServer();
 
 server.on("request", (req, res) => {
-  if (bare.shouldRoute(req)) bare.routeRequest(req, res);
-  else {
-    if (req.url.startsWith("/data")) {
-      analytics(req, res, data);
-    } else {
-      serve(req, res, (err) => {
-        res.writeHead(err?.statusCode || 500, null, {
-          "Content-Type": "text/plain",
-        });
-        res.end("Error");
-      });
-    }
+  if (bare.shouldRoute(req)) {
+    bare.routeRequest(req, res);
+  } else {
+    app(req, res);
   }
 });
 
 server.on("upgrade", (req, socket, head) => {
-  if (bare.shouldRoute(req, socket, head)) bare.routeUpgrade(req, socket, head);
-  else socket.end();
+  if (bare.shouldRoute(req)) {
+    bare.routeUpgrade(req, socket, head);
+  } else {
+    socket.end();
+  }
 });
+
+let port = parseInt(process.env.PORT || "");
+
+if (isNaN(port)) port = 8080;
 
 server.on("listening", () => {
-  const addr = server.address();
+  const address = server.address();
 
-  console.log(`Elixir running on port ${addr.port}`);
-  console.log("");
-  console.log("You may now access it using your browser!");
-
+  // by default we are listening on 0.0.0.0 (every interface)
+  // we just need to list a few
+  console.log("Listening on:");
+  console.log(`\thttp://localhost:${address.port}`);
+  console.log(`\thttp://${hostname()}:${address.port}`);
   console.log(
-    `Local: http://${
-      addr.family === "IPv6" ? `[${addr.address}]` : addr.address
-    }:${addr.port}`
+    `\thttp://${
+      address.family === "IPv6" ? `[${address.address}]` : address.address
+    }:${address.port}`
   );
-  try {
-    console.log(`On Your Network: http://${address.ip()}:${addr.port}`);
-  } catch (err) {
-    /* Can't find LAN interface */
-  }
-  if (process.env.REPL_SLUG && process.env.REPL_OWNER)
-    console.log(
-      `Replit: https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
-    );
 });
 
-server.listen({ port: process.env.PORT || 80 });
+// https://expressjs.com/en/advanced/healthcheck-graceful-shutdown.html
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+function shutdown() {
+  console.log("SIGTERM signal received: closing HTTP server");
+  server.close();
+  bare.close();
+  process.exit(0);
+}
+
+server.listen({
+  port,
+});
